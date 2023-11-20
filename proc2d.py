@@ -1,4 +1,5 @@
 """
+220330 Soichiro Nishiyama
 set of functions to process fruit slice data
 
 """
@@ -31,11 +32,12 @@ def findDeepest(pol_r):
     # pol_r = pr_1
     pr_R = pol_r[pol_r[:, 0] > 0]
     try:
+        # 右肩上がりになっているところがあればみつけ、そこより右で最大になるところを探す
         pr_r_sorted = pr_R[np.argsort(pr_R[:, 0])]
         xmax = max(pol_r[:, 0])
         xmin = min(pol_r[:, 0])
-        xbin = xmax / 20
-        point_ref = pr_r_sorted[0]
+        xbin = xmax / 20  # このx間隔でyの差 (みぎあがりかどうか) を決める
+        point_ref = pr_r_sorted[0]  # 右上がりがないときは、一番y=0に近い点
         delta_y = 0
         for j in range(int(len(pr_r_sorted) / 2)):
             point1 = pr_r_sorted[j]
@@ -178,7 +180,7 @@ class TransSect(shapely.geometry.polygon.Polygon):
         return roundness
 
     def circle_ext(self):
-        # 外接円の直径
+        # 外接円の直径 22/03/25
         points = self.pol.boundary.xy
         points_tuple = []
         for i in range(np.shape(points)[1]):
@@ -187,7 +189,7 @@ class TransSect(shapely.geometry.polygon.Polygon):
         return circle[2]
 
     def circle_inn(self):
-        # convex_hullの内接円の直径
+        # convex_hullの内接円の直径 22/03/25
         points_hull = self.pol.convex_hull.boundary.xy  # edit 21/12/22
         points_list = []
         for i in range(np.shape(points_hull)[1]):
@@ -204,6 +206,12 @@ class VertSect(shapely.geometry.polygon.Polygon):
     def __init__(self, pol):
         self.pol = pol
         super().__init__()
+
+    ###230903追記．これまでに出してた溝の深さの値，縦断面積での標準化が装備されてなかったので割るように縦断面積の出力
+    #def vert_sect_area(self):
+        #vert_area = self.pol.area
+        #return vert_area
+    ###
 
     def coord_and_curvature(self, resolution=0.5, npo=2):
         """
@@ -223,7 +231,7 @@ class VertSect(shapely.geometry.polygon.Polygon):
 
     @staticmethod
     def horizontal_groove_by_curvature(sect_coord, sect_cur, xrange, yrange):
-        # detect deepest points of horizontal groove in v_sect
+        # 22/03/30 detect deepest points of horizontal groove in v_sect
         # xrange, yrange: are the list in [min,max]
         # groove points will be explored in the ranges
 
@@ -254,10 +262,12 @@ class VertSect(shapely.geometry.polygon.Polygon):
 
     def hgp_convex(self, gp, cal=True):
         """
-        Return the area of convex hull defects adjacent to gp.
-        Multiply line(centroid - gp) 1.1 times, and search for the adjacent areas by intersecting between the line and convex hull defects
+        gpと隣接する凸包欠陥の面積を返す。
+        o-gpを1.1倍延長して、隣接領域を探索する
 
-        :param gp: groove points
+        cal = Trueのとき、凸包欠陥はy=0と交わらない。y=0と交わるものを除いて探索する
+
+        :param gp:
         :param cal: If True, franking convex defect will be searched among the defects that don't intersect wtih y = 0
         :return:
         """
@@ -315,6 +325,7 @@ class Sections:
 
     @staticmethod
     def select_largest_polygon(sect):
+        # 22/03/28 polygons_closedでエラーが出るものがあったため、面積最大のpolygonの出し方を調整
         # return shapely.geometry.Polygon objects
         area = []
         for pol in sect.polygons_closed:
@@ -369,12 +380,15 @@ class Sections:
         return res_area
 
     def trans_coordinate_direction(self, t_conv):
+        # 21/12/17 追記
+        # 面積最大となるsectionが中央より後で出てくるとき反転する
         # max_id = res_area.index(max(res_area))
         # if max_id > 50:
         #    sections.reverse()
         #    res_area = transverse_area(sections)
         # return sections, res_area
 
+        # 22/03/25 変更
         # t_conv=1のとき、sectionsを逆にする
         if t_conv == 1:
             self.sections.reverse()
@@ -413,13 +427,19 @@ class Sections:
         return sections_oriented, rotates
 
     def depth_by_intersection_vis(self, step):
+        # modified 2022/02/06
+        # 回転して、bboxとの差の最大場所をさがす
+        # 輪郭パターンベースの方法
+        # modified 2022/03/25
+        # 外接円の直径でdepthを割る
+
+        # step は整数。0のとき可視化しない
 
         nrow = 2  # can be changed
         num_sect = len(self.sections)
         if step != 0:
             ncol = int(num_sect / step / nrow)
             fig = plt.figure(1, figsize=(10, 5))
-            fig.tight_layout()
 
         polygon_sample_resolution = 5  # 軽くするため、数を減らす。trimesh.path.polygons.resample_boundaries()の説明をみる
 
@@ -450,7 +470,7 @@ class Sections:
                 res_depth.append(np.average(depth))
                 i = sect_ori
 
-                if not step == 0 and curr % step == 0:
+                if curr % step == 0 and not step == 0:
                     ax = fig.add_subplot(nrow, ncol, curr // step + 1)
                     ax.set_aspect('equal')
                     ax.set_ylim(ymin, ymax)
@@ -468,6 +488,7 @@ class Sections:
                         ax.plot(points[z][0], points[z][1], marker="o", markersize=2, color="red")
                         ax.text(points[z][0], points[z][1], str(round(depth[z], 2)), fontsize=6)
             curr += 1
+        fig.tight_layout()
         return res_depth
 
     def show_combined_sections(self):
@@ -485,15 +506,40 @@ class Sections:
                 res_lw.append((ymax - ymin) / (xmax - xmin))
         return res_lw
 
+    ###230903追記．上記の縦横比の求め方を参考に，縦断面積を算出する
+    def vert_sect_area(self):
+        res_sec_area = []
+        curr = 0
+        for sect in self.sections:
+            if not self.is_null(sect):
+                res_sec_area.append(sect.area)
+            else:
+                res_sec_area.append(np.nan)
+#                 res_sec_area.append(self.pol.area)(sect.areaもダメ)
+            curr += 1
+        return res_sec_area
+    ###
+
     def v_horizontal_groove(self, init_limit=0.3, resolution=0.5, npo=2, cda_thre=0.0001, vis=True):
         """
-        param vis: boolean True to turn on visualization, False to turn it off.
+        22/03/30
+        複数断面で座点を検出し、その中で多数決で座がありそうなところを決定し、その周囲でもう一度検出する方法で行う
 
-        :param init_limit: variable that specifies region not to search for the groove point in initial sampling. This doesn't search between 0 and xmax*init_limit in x.
-        :param resolution: Minimum distance for contour point sampling
-        :param npo: How many points to approximate when computing curvature. 1=3 points, 2=5 points, 3=7 points
-        :param cda_thre: convexity defect area threshold
-        :param vis: visualization
+        22/03/31
+        座点の検出を、隣接した凸包欠陥が一定以上の大きさのときに限るように変更。これに伴ってGmeansの多数決が不要になったためコメントアウト
+
+        22/04/01
+        座点候補と隣接した凸包の欠陥がy=0と交差しているとき、座点と認識しない。Gmeansの多数決を、グループが1つだけのときに対応するようにコードを修正したうえで再度採用
+        座点検出可能が全断面の半分以下のときプリントしない
+
+        22/05/26
+        検出した座点について、左右両方について別々に座パラメータを計算するように変更
+
+        :param init_limit: 一度目の座点探索で、探索しない場所を指定する変数。x座標について、0からxmax*init_limitの間は探索しない。yは0からymaxまで探索する。
+        :param resolution: 輪郭点のサンプリングにおける最小近接距離
+        :param npo: curvatureを計算するときに、いくつの点を近似するか。1=3点、2=5点、3=7点
+        :param cda_thre: convexity defect area threshold 座点と隣接した凸包欠陥の断面積に対する割合がこれ以下のとき、座点と認識しない
+        :param vis: boolean Trueで可視化オン、Falseでオフ
         :return:
         """
         tgroove_p1_tmp = []
@@ -658,6 +704,8 @@ class Sections:
 
     @staticmethod
     def second_search_range(tg_points, mode_idx, k=0.1):
+        # 二回目の座点検索の範囲を算出
+        # k: 座点がある座標範囲からk倍離れた範囲を検索する。0.1でxmax-xminの0.1倍の範囲を追加で検索
         xmin, ymin = np.min(tg_points[mode_idx], axis=0)
         xmax, ymax = np.max(tg_points[mode_idx], axis=0)
         dx = xmax - xmin
